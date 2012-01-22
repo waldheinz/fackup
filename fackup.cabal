@@ -1,0 +1,19 @@
+Name:                fackup
+Version:             0.1
+Synopsis:            Backup Tool for Flickr photos.
+Description:         Downloads all your Flickr Photo Stream.
+Homepage:            https://github.com/waldheinz/hackup
+License:             BSD3
+License-file:        LICENSE
+Author:              Matthias Treydte
+Maintainer:          waldheinz@gmail.com
+Category:            Web
+Build-type:          Simple
+Cabal-version:       >=1.2
+
+Executable fackup
+   Main-is: src/Main.hs
+   Build-depends:
+      haskell2010 == 1.*,
+      hoauth      == 0.3.*
+  
