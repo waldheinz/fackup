@@ -1,9 +1,21 @@
 
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Main ( main ) where
 
+import Debug.Trace
+
+import Control.Applicative ((<*>))
+import Control.Monad (mzero)
+import Data.Aeson
+import Data.Aeson.Types (Parser, parseMaybe, Value)
+import Data.Attoparsec.ByteString.Lazy (parseOnly)
+import Data.ByteString.Lazy (ByteString, toChunks)
+import qualified Data.ByteString as BS (ByteString, concat)
+import Data.Functor ((<$>))
 import Data.Maybe
+import qualified Data.Vector as V
 import Network.OAuth.Consumer
 import Network.OAuth.Http.CurlHttpClient
 import Network.OAuth.Http.Request
@@ -11,7 +23,7 @@ import Network.OAuth.Http.Response
 
 reqUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/request_token"
 accUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/access_token"
-srvUrl   = fromJust $ parseURL "http://query.yahooapis.com/v1/yql?q=select%20%2A%20from%20social.profile%20where%20guid%3Dme"
+srvUrl   = fromJust $ parseURL "http://api.flickr.com/services/rest?nojsoncallback=1&format=json"
 app      = Application "eeb2b5a4cde6988dec44195952ce1cbe" "fdc50914cdbc3bd8" OOB
 token    = fromApplication app
 
@@ -28,7 +40,46 @@ response = runOAuthM token $ do
 
 storedAuth = ("72157628981807463-1c78795ce3b82eb0","5b71c229f5d640b5")
 
+authToken :: (String, String) -> Token
+authToken (t, s) = AccessToken app fs where
+   fs = insert ("oauth_token_secret", s) $ singleton ("oauth_token", t)
+
+callFlickr :: Token -> String -> IO Response
+callFlickr t m = runOAuthM t $ signRq2 HMACSHA1 Nothing url >>= serviceRequest CurlClient where
+   url =  srvUrl { qString = insert ("method", m) $ qString srvUrl }
+
+---------------------------------------------------------------------------
+-- Photo Sets
+---------------------------------------------------------------------------
+
+data PhotoSet = PhotoSet 
+   { psId     :: String
+   , name     :: String
+   } deriving (Show)
+
+instance FromJSON PhotoSet where
+   parseJSON (Object v) = PhotoSet <$>
+                             v .: "id" <*>
+                             (v .: "title" >>= \x -> x .: "_content")
+   parseJSON _ = mzero
+   
+unlazy :: Data.ByteString.Lazy.ByteString -> BS.ByteString
+unlazy = BS.concat . toChunks
+
+getSets :: Token -> IO [PhotoSet]
+getSets t = do
+   r <- parseOnly json . unlazy . rspPayload <$> callFlickr t "flickr.photosets.getList"
+   return $ fromMaybe (error "Invalid response from Facebook") $
+            parseMaybe parseSets $ either error id r
+   where
+      parseSets :: Value -> Data.Aeson.Types.Parser [PhotoSet]
+      parseSets (Object o) = do
+         (Array a) <- o .: "photosets" >>= \x -> x .: "photoset"
+         V.forM a $ \x -> parseJSON x
+      parseSets _ = mzero
+
 main :: IO ()
 main = do
-   r <- response
+   let t = authToken storedAuth
+   r <- getSets t
    print r
