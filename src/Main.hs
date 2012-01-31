@@ -69,13 +69,13 @@ unlazy = BS.concat . toChunks
 getSets :: Token -> IO [PhotoSet]
 getSets t = do
    r <- parseOnly json . unlazy . rspPayload <$> callFlickr t "flickr.photosets.getList"
-   return $ fromMaybe (error "Invalid response from Facebook") $
+   return $ fromMaybe (error "Invalid response from Flickr") $
             parseMaybe parseSets $ either error id r
    where
       parseSets :: Value -> Data.Aeson.Types.Parser [PhotoSet]
       parseSets (Object o) = do
          (Array a) <- o .: "photosets" >>= \x -> x .: "photoset"
-         V.forM a $ \x -> parseJSON x
+         mapM parseJSON $ V.toList a
       parseSets _ = mzero
 
 main :: IO ()
