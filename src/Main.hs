@@ -157,22 +157,24 @@ notInSet :: Token -> IO (V.Vector Photo)
 notInSet t = getPhotoList t "flickr.photos.getNotInSet" "photos" empty 1
 
 -- | downloads a photo and stores the file in the specified path
-down
+down'
    :: FilePath -- ^ path where to store the photo
    -> Photo -- ^ the photo to download
    -> IO ()
-down dir p = do
+down' dir p = do
    de <- doesDirectoryExist dir 
    unless de $ do
       putStrLn $ "creating dir " ++ show dir
       createDirectory dir
       
-   putStrLn $ "   downloading " ++ show (pURL p)
+
+   let fullname = dir </> fname <.> pFormat p
+   putStrLn $ "   downloading " ++ show (pURL p) ++ " -> " ++ show fullname
    img <- DC.openURI $ pURL p
    
    case img of
         (Left e) -> error e
-        (Right d) -> BS.writeFile (dir </> fname <.> pFormat p) d
+        (Right d) -> BS.writeFile fullname d
         
    where
       -- ^ finds a "good" name for the image file
@@ -180,6 +182,15 @@ down dir p = do
          | null (pTitle p) = makeValid $ pId p
          | otherwise = makeValid $ intercalate "_" $ splitDirectories $ pTitle p
             -- makes sure we don't create additional directories
+
+-- | tries multiple times to download a single photo
+down :: FilePath -> Photo -> IO ()
+down fp p = go 5 where
+   go 0 = putStrLn $ "FAILED to get " ++ show p
+   go n = CE.catch (down' fp p)
+             (\ex -> do
+                putStrLn $ "error getting photo: " ++ show (ex :: CE.SomeException)
+                go (n-1) )
 
 main :: IO ()
 main = do
