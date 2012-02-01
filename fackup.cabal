@@ -22,4 +22,5 @@ Executable fackup
       download-curl  == 0.1.*,
       filepath       == 1.2.*,
       hoauth         == 0.3.*,
+      text           == 0.11.*,
       vector         == 0.9.*

@@ -16,6 +16,7 @@ import qualified Data.ByteString.Lazy as BSL (toChunks)
 import qualified Data.ByteString as BS (ByteString, concat, writeFile)
 import Data.Functor ((<$>))
 import Data.Maybe
+import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified Network.Curl.Download as DC
 import Network.OAuth.Consumer
@@ -23,7 +24,7 @@ import Network.OAuth.Http.CurlHttpClient
 import Network.OAuth.Http.Request
 import Network.OAuth.Http.Response
 import System.Directory
-import System.FilePath ((</>), (<.>))
+import System.FilePath ((</>), (<.>), makeValid)
 
 reqUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/request_token"
 accUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/access_token"
@@ -86,6 +87,7 @@ getSets t = callFlickr t "flickr.photosets.getList" empty parseSets where
       mapM parseJSON $ V.toList a
    parseSets _ = mzero
 
+
 --------------------------------------------------------------------------------
 -- Individual Photo Infos
 --------------------------------------------------------------------------------
@@ -106,24 +108,28 @@ instance FromJSON Photo where
    parseJSON _ = mzero
 
 -- | gets one page of photos from a set
-getPhotos' :: Token -> PhotoSet -> Integer -> IO (V.Vector Photo)
-getPhotos' t s p = do
+getPhotoList
+   :: Token -- ^ access token
+   -> String -- ^ method name
+   -> T.Text -- ^ how the list is called in the JSON reponse
+   -> FieldList -- ^ additional request parameters
+   -> Integer -> IO (V.Vector Photo)
+getPhotoList t m jn fl p = do
    putStrLn $ "   getting page " ++ show p
-   (pg, res) <- callFlickr t "flickr.photosets.getPhotos"
+   (pg, res) <- callFlickr t m
       (insert ("page", show p) $
-       insert ("extras", "url_o,original_format") $
-       singleton ("photoset_id", psId s)) pp
+       insert ("extras", "url_o,original_format") fl) pp
 
    if p >= pg
       then return res
       else do
-         res' <- getPhotos' t s (p+1)
+         res' <- getPhotoList t m jn fl (p+1)
          return $ res V.++ res'
    
    where
       pp :: Value -> Data.Aeson.Types.Parser (Integer, V.Vector Photo)
       pp (Object o) = do
-         ps <- o .: "photoset"
+         ps <- o .: jn
          (Number (I pg)) <- ps .: "pages"
          a <- ps .: "photo"
          return (pg, a)
@@ -131,16 +137,22 @@ getPhotos' t s p = do
 
 -- | gets all photos from the specified set
 getPhotos :: Token -> PhotoSet -> IO (V.Vector Photo)
-getPhotos t s = (getPhotos' t s 1)
+getPhotos t s = getPhotoList t "flickr.photosets.getPhotos" "photoset"
+      (singleton ("photoset_id", psId s)) 1
+
+--------------------------------------------------------------------------------
+-- Photos not belonging to any set
+--------------------------------------------------------------------------------
+
+notInSet :: Token -> IO (V.Vector Photo)
+notInSet t = getPhotoList t "flickr.photos.getNotInSet" "photos" empty 1
 
 --------------------------------------------------------------------------------
 -- Actual Photo Download
 --------------------------------------------------------------------------------
 
-down :: PhotoSet -> Photo -> IO ()
-down s p = do
-   -- make sure download folder exists
-   let dir = psName s
+down :: FilePath -> Photo -> IO ()
+down dir p = do
    de <- doesDirectoryExist dir 
    unless de $ do
       putStrLn $ "creating dir " ++ show dir
@@ -152,7 +164,7 @@ down s p = do
    case img of
         (Left e) -> error e
         (Right d) -> do
-           BS.writeFile ((psName s) </> fname <.> (pFormat p)) d
+           BS.writeFile (dir </> fname <.> (pFormat p)) d
    where
       fname :: FilePath
       fname
@@ -162,6 +174,12 @@ down s p = do
 main :: IO ()
 main = do
    let t = authToken storedAuth
+
+   putStrLn "getting photos not belonging to any set..."
+   nis <- notInSet t
+
+   V.mapM_ (down "# not in set") nis
+   
    putStrLn "getting photo sets..."
    sets <- getSets t
    putStrLn $ "found " ++ (show $ length sets) ++ " sets"
@@ -170,5 +188,5 @@ main = do
       putStrLn $ "processing set \"" ++ (psName s) ++ "\" (" ++ psId s ++ ") ..."
       ps <- getPhotos t s
       putStrLn $ "   contains " ++ (show $ V.length ps) ++ " photos, downloading..."
-      V.mapM_ (down s) ps
+      V.mapM_ (down $ makeValid $ psName s) ps
       
