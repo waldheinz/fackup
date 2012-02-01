@@ -7,13 +7,13 @@ module Main ( main ) where
 import Debug.Trace
 
 import Control.Applicative ((<*>))
-import Control.Monad (forM_, mzero)
+import Control.Monad (forM_, mzero, unless)
 import Data.Aeson
 import Data.Aeson.Types (Parser, parseMaybe, Value)
 import Data.Attoparsec.ByteString.Lazy (parseOnly)
 import Data.Attoparsec.Number
 import qualified Data.ByteString.Lazy as BSL (toChunks)
-import qualified Data.ByteString as BS (ByteString, concat)
+import qualified Data.ByteString as BS (ByteString, concat, writeFile)
 import Data.Functor ((<$>))
 import Data.Maybe
 import qualified Data.Vector as V
@@ -22,6 +22,8 @@ import Network.OAuth.Consumer
 import Network.OAuth.Http.CurlHttpClient
 import Network.OAuth.Http.Request
 import Network.OAuth.Http.Response
+import System.Directory
+import System.FilePath ((</>), (<.>))
 
 reqUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/request_token"
 accUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/access_token"
@@ -91,6 +93,7 @@ getSets t = callFlickr t "flickr.photosets.getList" empty parseSets where
 data Photo = Photo
    { pId       :: String
    , pTitle    :: String
+   , pFormat   :: String
    , pURL      :: String
    } deriving (Show)
 
@@ -98,6 +101,7 @@ instance FromJSON Photo where
    parseJSON (Object o) = Photo <$>
       o .: "id" <*>
       o .: "title" <*>
+      o .: "originalformat" <*>
       o .: "url_o"
    parseJSON _ = mzero
 
@@ -107,7 +111,7 @@ getPhotos' t s p = do
    putStrLn $ "   getting page " ++ show p
    (pg, res) <- callFlickr t "flickr.photosets.getPhotos"
       (insert ("page", show p) $
-       insert ("extras", "url_o") $
+       insert ("extras", "url_o,original_format") $
        singleton ("photoset_id", psId s)) pp
 
    if p >= pg
@@ -135,10 +139,26 @@ getPhotos t s = (getPhotos' t s 1)
 
 down :: PhotoSet -> Photo -> IO ()
 down s p = do
+   -- make sure download folder exists
+   let dir = psName s
+   de <- doesDirectoryExist dir 
+   unless de $ do
+      putStrLn $ "creating dir " ++ show dir
+      createDirectory dir
+      
    putStrLn $ "   downloading " ++ show (pURL p)
    img <- DC.openURI $ pURL p
-   return ()
    
+   case img of
+        (Left e) -> error e
+        (Right d) -> do
+           BS.writeFile ((psName s) </> fname <.> (pFormat p)) d
+   where
+      fname :: FilePath
+      fname
+         | null (pTitle p) = pId p
+         | otherwise = pTitle p
+
 main :: IO ()
 main = do
    let t = authToken storedAuth
