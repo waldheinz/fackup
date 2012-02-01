@@ -58,8 +58,6 @@ saveAuth a = do
    dir <- getAppUserDataDirectory "fackup"
    writeFile (dir </> "auth") $ show a   
 
-storedAuth = ("72157628981807463-1c78795ce3b82eb0","5b71c229f5d640b5")
-
 authToken :: (String, String) -> Token
 authToken (t, s) = AccessToken app fs where
    fs = insert ("oauth_token_secret", s) $ singleton ("oauth_token", t)
@@ -186,13 +184,14 @@ down dir p = do
 main :: IO ()
 main = do
    -- load / request authentication token
-   auth <- CE.catch loadAuth $ \ex -> do
-      let e = (ex :: CE.IOException)
-      a <- doAuth
-      saveAuth a
-      return a
-      
-   let t = authToken storedAuth
+   t <- authToken <$>
+           CE.catch loadAuth
+              (\ex -> do
+                 putStrLn $
+                    "failed loading auth info: " ++ show (ex :: CE.IOException)
+                 a <- doAuth
+                 saveAuth a
+                 return a)
 
    putStrLn "getting photos not belonging to any set..."
    nis <- notInSet t
