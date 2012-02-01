@@ -13,6 +13,7 @@ import Data.Attoparsec.Number
 import qualified Data.ByteString.Lazy as BSL (toChunks)
 import qualified Data.ByteString as BS (ByteString, concat, writeFile)
 import Data.Functor ((<$>))
+import Data.List (intercalate)
 import Data.Maybe
 import qualified Data.Text as T
 import qualified Data.Vector as V
@@ -22,7 +23,7 @@ import Network.OAuth.Http.CurlHttpClient
 import Network.OAuth.Http.Request
 import Network.OAuth.Http.Response
 import System.Directory
-import System.FilePath ((</>), (<.>), makeValid)
+import System.FilePath ((</>), (<.>), makeValid, splitDirectories)
 
 reqUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/request_token"
 accUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/access_token"
@@ -141,10 +142,6 @@ getPhotos t s = getPhotoList t "flickr.photosets.getPhotos" "photoset"
 notInSet :: Token -> IO (V.Vector Photo)
 notInSet t = getPhotoList t "flickr.photos.getNotInSet" "photos" empty 1
 
---------------------------------------------------------------------------------
--- Actual Photo Download
---------------------------------------------------------------------------------
-
 -- | downloads a photo and stores the file in the specified path
 down
    :: FilePath -- ^ path where to store the photo
@@ -162,12 +159,13 @@ down dir p = do
    case img of
         (Left e) -> error e
         (Right d) -> BS.writeFile (dir </> fname <.> pFormat p) d
+        
    where
-      fname :: FilePath
+      -- ^ finds a "good" name for the image file
       fname
-         | null (pTitle p) = pId p
-         | otherwise = pTitle p
-
+         | null (pTitle p) = makeValid $ pId p
+         | otherwise = makeValid $ intercalate "_" $ splitDirectories $ pTitle p
+            -- makes sure we don't create additional directories
 
 main :: IO ()
 main = do
