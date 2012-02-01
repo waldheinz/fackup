@@ -4,8 +4,6 @@
 
 module Main ( main ) where
 
-import Debug.Trace
-
 import Control.Applicative ((<*>))
 import Control.Monad (forM_, mzero, unless)
 import Data.Aeson
@@ -49,6 +47,7 @@ authToken :: (String, String) -> Token
 authToken (t, s) = AccessToken app fs where
    fs = insert ("oauth_token_secret", s) $ singleton ("oauth_token", t)
 
+-- does an authenticated call to the Flickr API
 callFlickr
    :: Token       -- ^ auth token
    -> String      -- ^ method name
@@ -79,6 +78,7 @@ instance FromJSON PhotoSet where
                              (v .: "title" >>= \x -> x .: "_content")
    parseJSON _ = mzero
 
+-- | gets the list of photos for the currently logged in user
 getSets :: Token -> IO [PhotoSet]
 getSets t = callFlickr t "flickr.photosets.getList" empty parseSets where
    parseSets :: Value -> Data.Aeson.Types.Parser [PhotoSet]
@@ -87,11 +87,7 @@ getSets t = callFlickr t "flickr.photosets.getList" empty parseSets where
       mapM parseJSON $ V.toList a
    parseSets _ = mzero
 
-
---------------------------------------------------------------------------------
--- Individual Photo Infos
---------------------------------------------------------------------------------
-
+-- | the information we need to access an individual photo
 data Photo = Photo
    { pId       :: String
    , pTitle    :: String
@@ -107,7 +103,8 @@ instance FromJSON Photo where
       o .: "url_o"
    parseJSON _ = mzero
 
--- | gets one page of photos from a set
+-- | gets the photos from a "photo list" (they are formatted the same,
+--   so we can use a generic function for our purposes)
 getPhotoList
    :: Token -- ^ access token
    -> String -- ^ method name
@@ -140,10 +137,7 @@ getPhotos :: Token -> PhotoSet -> IO (V.Vector Photo)
 getPhotos t s = getPhotoList t "flickr.photosets.getPhotos" "photoset"
       (singleton ("photoset_id", psId s)) 1
 
---------------------------------------------------------------------------------
--- Photos not belonging to any set
---------------------------------------------------------------------------------
-
+-- | gets the photos not belonging to any set
 notInSet :: Token -> IO (V.Vector Photo)
 notInSet t = getPhotoList t "flickr.photos.getNotInSet" "photos" empty 1
 
@@ -151,7 +145,11 @@ notInSet t = getPhotoList t "flickr.photos.getNotInSet" "photos" empty 1
 -- Actual Photo Download
 --------------------------------------------------------------------------------
 
-down :: FilePath -> Photo -> IO ()
+-- | downloads a photo and stores the file in the specified path
+down
+   :: FilePath -- ^ path where to store the photo
+   -> Photo -- ^ the photo to download
+   -> IO ()
 down dir p = do
    de <- doesDirectoryExist dir 
    unless de $ do
@@ -163,30 +161,28 @@ down dir p = do
    
    case img of
         (Left e) -> error e
-        (Right d) -> do
-           BS.writeFile (dir </> fname <.> (pFormat p)) d
+        (Right d) -> BS.writeFile (dir </> fname <.> pFormat p) d
    where
       fname :: FilePath
       fname
          | null (pTitle p) = pId p
          | otherwise = pTitle p
 
+
 main :: IO ()
 main = do
    let t = authToken storedAuth
 
    putStrLn "getting photos not belonging to any set..."
-   nis <- notInSet t
-
-   V.mapM_ (down "# not in set") nis
+   _ <- V.mapM_ (down "# not in set") <$> notInSet t
    
    putStrLn "getting photo sets..."
    sets <- getSets t
-   putStrLn $ "found " ++ (show $ length sets) ++ " sets"
+   putStrLn $ "found " ++ show (length sets) ++ " sets"
    
    forM_ sets $ \s -> do
-      putStrLn $ "processing set \"" ++ (psName s) ++ "\" (" ++ psId s ++ ") ..."
+      putStrLn $ "processing set \"" ++ psName s ++ "\" (" ++ psId s ++ ") ..."
       ps <- getPhotos t s
-      putStrLn $ "   contains " ++ (show $ V.length ps) ++ " photos, downloading..."
+      putStrLn $ "   contains " ++ show (V.length ps) ++ " photos, downloading..."
       V.mapM_ (down $ makeValid $ psName s) ps
       
