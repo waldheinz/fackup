@@ -12,11 +12,12 @@ import Data.Aeson
 import Data.Aeson.Types (Parser, parseMaybe, Value)
 import Data.Attoparsec.ByteString.Lazy (parseOnly)
 import Data.Attoparsec.Number
-import Data.ByteString.Lazy (ByteString, toChunks)
+import qualified Data.ByteString.Lazy as BSL (toChunks)
 import qualified Data.ByteString as BS (ByteString, concat)
 import Data.Functor ((<$>))
 import Data.Maybe
 import qualified Data.Vector as V
+import qualified Network.Curl.Download as DC
 import Network.OAuth.Consumer
 import Network.OAuth.Http.CurlHttpClient
 import Network.OAuth.Http.Request
@@ -58,7 +59,7 @@ callFlickr t m ps p = runOAuthM t $ do
    return $ fromMaybe (error "cannot parse Flickr response") $
             parseMaybe p $ either error id res
    where
-      unlazy = BS.concat . toChunks
+      unlazy = BS.concat . BSL.toChunks
 
 --------------------------------------------------------------------------------
 -- Photo Sets
@@ -84,16 +85,20 @@ getSets t = callFlickr t "flickr.photosets.getList" empty parseSets where
    parseSets _ = mzero
 
 --------------------------------------------------------------------------------
--- Individual Photos
+-- Individual Photo Infos
 --------------------------------------------------------------------------------
 
 data Photo = Photo
-   { pId    :: String
-   , title  :: String
+   { pId       :: String
+   , pTitle    :: String
+   , pURL      :: String
    } deriving (Show)
 
 instance FromJSON Photo where
-   parseJSON (Object o) = Photo <$> o .: "id" <*> o .: "title"
+   parseJSON (Object o) = Photo <$>
+      o .: "id" <*>
+      o .: "title" <*>
+      o .: "url_o"
    parseJSON _ = mzero
 
 -- | gets one page of photos from a set
@@ -101,7 +106,9 @@ getPhotos' :: Token -> PhotoSet -> Integer -> IO (V.Vector Photo)
 getPhotos' t s p = do
    putStrLn $ "   getting page " ++ show p
    (pg, res) <- callFlickr t "flickr.photosets.getPhotos"
-      (insert ("page", show p) $ singleton ("photoset_id", psId s)) pp
+      (insert ("page", show p) $
+       insert ("extras", "url_o") $
+       singleton ("photoset_id", psId s)) pp
 
    if p >= pg
       then return res
@@ -122,6 +129,16 @@ getPhotos' t s p = do
 getPhotos :: Token -> PhotoSet -> IO (V.Vector Photo)
 getPhotos t s = (getPhotos' t s 1)
 
+--------------------------------------------------------------------------------
+-- Actual Photo Download
+--------------------------------------------------------------------------------
+
+down :: PhotoSet -> Photo -> IO ()
+down s p = do
+   putStrLn $ "   downloading " ++ show (pURL p)
+   img <- DC.openURI $ pURL p
+   return ()
+   
 main :: IO ()
 main = do
    let t = authToken storedAuth
@@ -132,5 +149,6 @@ main = do
    forM_ sets $ \s -> do
       putStrLn $ "processing set \"" ++ (psName s) ++ "\" (" ++ psId s ++ ") ..."
       ps <- getPhotos t s
-      putStrLn $ "   contains " ++ (show $ V.length ps) ++ " photos"
+      putStrLn $ "   contains " ++ (show $ V.length ps) ++ " photos, downloading..."
+      V.mapM_ (down s) ps
       
