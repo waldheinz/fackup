@@ -172,7 +172,8 @@ main = do
    let t = authToken storedAuth
 
    putStrLn "getting photos not belonging to any set..."
-   _ <- V.mapM_ (down "# not in set") <$> notInSet t
+   nis <- notInSet t
+   V.mapM_ (down "# not in set") nis
    
    putStrLn "getting photo sets..."
    sets <- getSets t
