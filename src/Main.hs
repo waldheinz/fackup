@@ -1,10 +1,10 @@
 
-{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main ( main ) where
 
 import Control.Applicative ((<*>))
+import qualified Control.Exception as CE
 import Control.Monad (forM_, mzero, unless)
 import Data.Aeson
 import Data.Aeson.Types (Parser, parseMaybe, Value)
@@ -29,18 +29,34 @@ reqUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/request_tok
 accUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/access_token"
 srvUrl   = fromJust $ parseURL "http://api.flickr.com/services/rest?nojsoncallback=1&format=json"
 app      = Application "eeb2b5a4cde6988dec44195952ce1cbe" "fdc50914cdbc3bd8" OOB
-token    = fromApplication app
 
-response = runOAuthM token $ do
+-- permanent credentials for accessing Flickr after a successfull authentication
+type StoredAuth = (String, String)
+
+-- tries to authenticate with Flickr
+doAuth :: IO StoredAuth
+doAuth = runOAuthM (fromApplication app) $ do
    signRq2 HMACSHA1 Nothing reqUrl >>= oauthRequest CurlClient
    cliAskAuthorization $ \t -> "http://www.flickr.com/services/oauth/authorize?oauth_token=" ++ 
                        (head . find (=="oauth_token") . oauthParams) t
    signRq2 HMACSHA1 Nothing accUrl >>= oauthRequest CurlClient
    t <- getToken
-   let
-        secret = head . find (== "oauth_token_secret") . oauthParams
+   let  secret = head . find (== "oauth_token_secret") . oauthParams
         token = head . find (== "oauth_token") . oauthParams
    return (token t, secret t)
+
+loadAuth :: IO StoredAuth
+loadAuth = do
+   dir <- getAppUserDataDirectory "fackup"
+   de <- doesDirectoryExist dir 
+   unless de $ createDirectory dir
+   auth <- readFile (dir </> "auth") 
+   return $! read auth
+
+saveAuth :: StoredAuth -> IO ()
+saveAuth a = do
+   dir <- getAppUserDataDirectory "fackup"
+   writeFile (dir </> "auth") $ show a   
 
 storedAuth = ("72157628981807463-1c78795ce3b82eb0","5b71c229f5d640b5")
 
@@ -169,6 +185,13 @@ down dir p = do
 
 main :: IO ()
 main = do
+   -- load / request authentication token
+   auth <- CE.catch loadAuth $ \ex -> do
+      let e = (ex :: CE.IOException)
+      a <- doAuth
+      saveAuth a
+      return a
+      
    let t = authToken storedAuth
 
    putStrLn "getting photos not belonging to any set..."
