@@ -11,6 +11,7 @@ import Control.Monad (forM_, mzero)
 import Data.Aeson
 import Data.Aeson.Types (Parser, parseMaybe, Value)
 import Data.Attoparsec.ByteString.Lazy (parseOnly)
+import Data.Attoparsec.Number
 import Data.ByteString.Lazy (ByteString, toChunks)
 import qualified Data.ByteString as BS (ByteString, concat)
 import Data.Functor ((<$>))
@@ -91,19 +92,36 @@ data Photo = Photo
    , title  :: String
    } deriving (Show)
 
--- | gets one page of photos from a set
-getPhotos' :: Token -> PhotoSet -> Int -> IO [Photo]
-getPhotos' t s p = callFlickr t
-                  "flickr.photosets.getPhotos"
-                  (insert ("page", show p) $ singleton ("photoset_id", psId s))
-                  pp where
-                     
-   pp :: Value -> Data.Aeson.Types.Parser [Photo]
-   pp = undefined
+instance FromJSON Photo where
+   parseJSON (Object o) = Photo <$> o .: "id" <*> o .: "title"
+   parseJSON _ = mzero
 
-getPhotos :: Token -> PhotoSet -> IO [Photo]
-getPhotos t s = undefined
+-- | gets one page of photos from a set
+getPhotos' :: Token -> PhotoSet -> Integer -> IO (V.Vector Photo)
+getPhotos' t s p = do
+   putStrLn $ "   getting page " ++ show p
+   (pg, res) <- callFlickr t "flickr.photosets.getPhotos"
+      (insert ("page", show p) $ singleton ("photoset_id", psId s)) pp
+
+   if p >= pg
+      then return res
+      else do
+         res' <- getPhotos' t s (p+1)
+         return $ res V.++ res'
    
+   where
+      pp :: Value -> Data.Aeson.Types.Parser (Integer, V.Vector Photo)
+      pp (Object o) = do
+         ps <- o .: "photoset"
+         (Number (I pg)) <- ps .: "pages"
+         a <- ps .: "photo"
+         return (pg, a)
+      pp _ = mzero
+
+-- | gets all photos from the specified set
+getPhotos :: Token -> PhotoSet -> IO (V.Vector Photo)
+getPhotos t s = (getPhotos' t s 1)
+
 main :: IO ()
 main = do
    let t = authToken storedAuth
@@ -114,5 +132,5 @@ main = do
    forM_ sets $ \s -> do
       putStrLn $ "processing set \"" ++ (psName s) ++ "\" (" ++ psId s ++ ") ..."
       ps <- getPhotos t s
-      putStrLn $ "   contains " ++ (show $ length ps) ++ " photos"
+      putStrLn $ "   contains " ++ (show $ V.length ps) ++ " photos"
       
