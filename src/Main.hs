@@ -45,6 +45,7 @@ doAuth = runOAuthM (fromApplication app) $ do
         token = head . find (== "oauth_token") . oauthParams
    return (token t, secret t)
 
+-- | reads authentication info from program settings directory
 loadAuth :: IO StoredAuth
 loadAuth = do
    dir <- getAppUserDataDirectory "fackup"
@@ -62,7 +63,7 @@ authToken :: (String, String) -> Token
 authToken (t, s) = AccessToken app fs where
    fs = insert ("oauth_token_secret", s) $ singleton ("oauth_token", t)
 
--- does an authenticated call to the Flickr API
+-- | does an authenticated call to the Flickr API
 callFlickr
    :: Token       -- ^ auth token
    -> String      -- ^ method name
@@ -102,7 +103,7 @@ getSets t = callFlickr t "flickr.photosets.getList" empty parseSets where
       mapM parseJSON $ V.toList a
    parseSets _ = mzero
 
--- | the information we need to access an individual photo
+-- | the information needed about individual photos
 data Photo = Photo
    { pId       :: String
    , pTitle    :: String
@@ -132,15 +133,14 @@ getPhotoList t m jn fl p = do
       (insert ("page", show p) $
        insert ("extras", "url_o,original_format") fl) pp
 
-   if p >= pg
+   if p >= pg -- get additional pages if needed
       then return res
       else do
          res' <- getPhotoList t m jn fl (p+1)
          return $ res V.++ res'
    
    where
-      pp :: Value -> Data.Aeson.Types.Parser (Integer, V.Vector Photo)
-      pp (Object o) = do
+      pp (Object o) = do -- parses one page of photos
          ps <- o .: jn
          (Number (I pg)) <- ps .: "pages"
          a <- ps .: "photo"
@@ -167,8 +167,7 @@ down' dir p = do
       putStrLn $ "creating dir " ++ show dir
       createDirectory dir
       
-
-   let fullname = dir </> fname <.> pFormat p
+   fullname <- fname
    putStrLn $ "   downloading " ++ show (pURL p) ++ " -> " ++ show fullname
    img <- DC.openURI $ pURL p
    
@@ -177,11 +176,25 @@ down' dir p = do
         (Right d) -> BS.writeFile fullname d
         
    where
-      -- ^ finds a "good" name for the image file
-      fname
-         | null (pTitle p) = makeValid $ pId p
-         | otherwise = makeValid $ intercalate "_" $ splitDirectories $ pTitle p
-            -- makes sure we don't create additional directories
+      -- | makes sure the file name is unique by appending a suffix
+      fname :: IO FilePath
+      fname = go 0 where
+         cand s -- candidate name for the given sequence number
+            | s == 0 = dir </> fn <.> pFormat p
+            | otherwise = dir </> (fn ++ "-" ++ show s) <.> pFormat p
+            
+         go s = do
+            e <- doesFileExist $ cand s
+            if e
+               then go (s+1)
+               else return $ cand s
+
+         -- | finds a "good" name for the image file
+         fn
+            | null (pTitle p) = makeValid $ pId p
+            | otherwise = makeValid $ intercalate "_" $
+                             splitDirectories $ pTitle p
+               -- make sure we don't create additional directories
 
 -- | tries multiple times to download a single photo
 down :: FilePath -> Photo -> IO ()
@@ -189,7 +202,8 @@ down fp p = go 5 where
    go 0 = putStrLn $ "FAILED to get " ++ show p
    go n = CE.catch (down' fp p)
              (\ex -> do
-                putStrLn $ "error getting photo: " ++ show (ex :: CE.SomeException)
+                putStrLn $
+                   "error getting photo: " ++ show (ex :: CE.SomeException)
                 go (n-1) )
 
 main :: IO ()
@@ -199,13 +213,14 @@ main = do
            CE.catch loadAuth
               (\ex -> do
                  putStrLn $
-                    "failed loading auth info: " ++ show (ex :: CE.IOException)
+                   "failed loading auth info: " ++ show (ex :: CE.IOException)
                  a <- doAuth
                  saveAuth a
                  return a)
 
    putStrLn "getting photos not belonging to any set..."
    nis <- notInSet t
+   putStrLn $ "   contains " ++ show (V.length nis) ++ " photos, downloading..."
    V.mapM_ (down "# not in set") nis
    
    putStrLn "getting photo sets..."
