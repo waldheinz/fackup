@@ -24,6 +24,7 @@ import Network.OAuth.Http.Request
 import Network.OAuth.Http.Response
 import System.Directory
 import System.FilePath ((</>), (<.>), makeValid, splitDirectories)
+import System.IO (hSetBuffering, hPutStrLn, BufferMode(..), stdout)
 
 reqUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/request_token"
 accUrl   = fromJust $ parseURL "http://www.flickr.com/services/oauth/access_token"
@@ -208,6 +209,8 @@ down fp p = go 5 where
 
 main :: IO ()
 main = do
+   hSetBuffering stdout LineBuffering
+   
    -- load / request authentication token
    t <- authToken <$>
            CE.catch loadAuth
