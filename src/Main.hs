@@ -59,7 +59,7 @@ saveAuth a = do
    dir <- getAppUserDataDirectory "fackup"
    writeFile (dir </> "auth") $ show a   
 
-authToken :: (String, String) -> Token
+authToken :: StoredAuth -> Token
 authToken (t, s) = AccessToken app fs where
    fs = insert ("oauth_token_secret", s) $ singleton ("oauth_token", t)
 
